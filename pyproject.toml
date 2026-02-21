@@ -11,3 +11,15 @@ dependencies = [
     "torchvision>=0.17",
     "whitenoise>=6.11.0",
 ]
+
+# Pull torch/torchvision from PyTorch's CPU-only index.
+# The default PyPI torch is the CUDA build (~2.5 GB).
+# The CPU build is ~700 MB — Railway has no GPU so CUDA is wasted space.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
