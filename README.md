@@ -1,5 +1,10 @@
 # ⚡ Neural Net Trainer
 
+[Deployed-Link](https://model-trainer-production.up.railway.app/)
+
+Above link is for Railway Deployment.
+Please consider using software offline as it is much faster and efficient.
+
 A browser-based image classifier trainer powered by **Django + PyTorch**. Build a neural network visually, pick a dataset and optimizer, then watch it train live — all from your browser.
 
 ![Python](https://img.shields.io/badge/Python-3.13-blue) ![Django](https://img.shields.io/badge/Django-6.0-green) ![PyTorch](https://img.shields.io/badge/PyTorch-2.10-red)
