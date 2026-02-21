@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  {% load static %}
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Neural Net Trainer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="{% static 'css/style.css' %}">
+</head>
+
+<body>
+
+  <!-- ══════════ HEADER ══════════ -->
+  <header class="header">
+    <div class="logo">⚡ Neural Trainer</div>
+    <nav class="nav-pills">
+      <button class="pill active" onclick="showPanel('builder', this)">🏗 Builder</button>
+      <button class="pill" onclick="showPanel('train', this)" id="tab-train">📈 Training</button>
+    </nav>
+    <div class="device-badge" id="device-badge">🖥 CPU</div>
+  </header>
+
+  <!-- ══════════ BUILDER PANEL ══════════ -->
+  <div id="panel-builder" class="panel active">
+    <div class="sidebar">
+
+      <!-- Dataset & Hyperparams -->
+      <section class="card">
+        <h3 class="card-title">⚙ Config</h3>
+        <label class="field-label">Dataset</label>
+        <select id="dataset" class="select" onchange="onDatasetChange(this.value)">
+          <option value="mnist">MNIST (28×28 grayscale)</option>
+          <option value="cifar10">CIFAR-10 (32×32 RGB)</option>
+          <option value="custom">📁 Custom Dataset (ZIP)</option>
+        </select>
+
+        <!-- Custom dataset upload zone — shown only when "custom" selected -->
+        <div id="custom-ds-area" style="display:none; margin-top:.6rem">
+          <div class="drop-zone" id="drop-zone" onclick="document.getElementById('custom-file').click()"
+            ondragover="dzDragOver(event)" ondragleave="dzDragLeave(event)" ondrop="dzDrop(event)">
+            <div id="drop-label">⬆ Drop ZIP here or click</div>
+            <input type="file" id="custom-file" accept=".zip" style="display:none" onchange="onFileSelected(this)">
+          </div>
+          <div class="ds-hint">
+            ZIP must contain: <code>train/</code> <code>test/</code> folders<br>
+            + <code>train.json</code> &amp; <code>test.json</code><br>
+            format: <code>{"img.jpg": "label"}</code>
+          </div>
+        </div>
+
+        <label class="field-label">Optimizer</label>
+        <select id="optimizer" class="select">
+          <option value="adam">Adam</option>
+          <option value="sgd">SGD + Momentum</option>
+          <option value="rmsprop">RMSProp</option>
+          <option value="adamw">AdamW</option>
+        </select>
+
+        <label class="field-label">Loss Function</label>
+        <select id="loss" class="select">
+          <option value="crossentropy">Cross Entropy</option>
+          <option value="nllloss">NLL Loss</option>
+        </select>
+
+        <div class="row-two">
+          <div>
+            <label class="field-label">Learning Rate</label>
+            <input type="number" id="lr" class="input-num" value="0.001" step="0.0001" min="0.00001" max="1">
+          </div>
+          <div>
+            <label class="field-label">Epochs</label>
+            <input type="number" id="epochs" class="input-num" value="5" min="1" max="50">
+          </div>
+        </div>
+      </section>
+
+      <!-- Layer Palette -->
+      <section class="card">
+        <h3 class="card-title">🧱 Layer Palette</h3>
+        <p class="hint">Click to add to network</p>
+        <div class="palette">
+          <div class="layer-chip conv" onclick="addLayer('conv2d')">Conv2d</div>
+          <div class="layer-chip pool" onclick="addLayer('maxpool2d')">MaxPool2d</div>
+          <div class="layer-chip flat" onclick="addLayer('flatten')">Flatten</div>
+          <div class="layer-chip linear" onclick="addLayer('linear')">Linear</div>
+          <div class="layer-chip act" onclick="addLayer('relu')">ReLU</div>
+          <div class="layer-chip act" onclick="addLayer('leakyrelu')">LeakyReLU</div>
+          <div class="layer-chip act" onclick="addLayer('sigmoid')">Sigmoid</div>
+          <div class="layer-chip act" onclick="addLayer('tanh')">Tanh</div>
+          <div class="layer-chip drop" onclick="addLayer('dropout')">Dropout</div>
+          <div class="layer-chip bn" onclick="addLayer('batchnorm2d')">BatchNorm2d</div>
+        </div>
+      </section>
+
+      <!-- Quick templates -->
+      <section class="card">
+        <h3 class="card-title">🚀 Quick Templates</h3>
+        <button class="btn-ghost" onclick="loadTemplate('mlp')">MLP for MNIST</button>
+        <button class="btn-ghost" onclick="loadTemplate('cnn')">CNN for CIFAR-10</button>
+        <button class="btn-ghost" onclick="loadTemplate('deep')">Deep CNN</button>
+      </section>
+
+      <button class="btn-primary" id="btn-train" onclick="startTraining()">▶ Start Training</button>
+      <button class="btn-danger" onclick="clearLayers()">✕ Clear Network</button>
+    </div>
+
+    <!-- Center: Node-based network diagram -->
+    <div class="canvas-area">
+      <div class="canvas-header">
+        <span class="canvas-title">Network Architecture</span>
+        <span class="param-count" id="param-count">— params</span>
+      </div>
+      <div id="network-diagram" class="diagram-scroll">
+        <div class="empty-state" id="empty-state">
+          <div class="empty-icon">🧠</div>
+          <p>Add layers from the palette to build your network</p>
+        </div>
+        <!-- Horizontal SVG for node-based diagram -->
+        <svg id="net-svg" height="280" width="100"></svg>
+      </div>
+    </div>
+
+    <!-- Right: Layer editor -->
+    <div class="layer-list-panel">
+      <h3 class="card-title" style="padding:1rem 1.25rem 0">Layers <span id="layer-count" class="badge">0</span></h3>
+      <div id="layer-list" class="layer-list"></div>
+    </div>
+  </div>
+
+  <!-- ══════════ TRAINING PANEL ══════════ -->
+  <div id="panel-train" class="panel">
+    <div class="train-grid">
+
+      <!-- Status bar -->
+      <div class="status-bar card">
+        <div class="stat-box">
+          <span class="stat-label">Epoch</span>
+          <span class="stat-val" id="stat-epoch">—</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-label">Train Loss</span>
+          <span class="stat-val" id="stat-loss">—</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-label">Val Loss</span>
+          <span class="stat-val" id="stat-val-loss">—</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-label">Train Acc</span>
+          <span class="stat-val accent" id="stat-acc">—</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-label">Val Acc</span>
+          <span class="stat-val accent" id="stat-val-acc">—</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-label">Status</span>
+          <span class="stat-val" id="stat-status">Idle</span>
+        </div>
+        <!-- Upload progress (shown only during upload) -->
+        <div class="stat-box" id="upload-box" style="display:none;flex:2">
+          <span class="stat-label">Upload</span>
+          <div class="progress-wrap" style="margin-top:.35rem">
+            <div class="progress-bar" id="upload-progress-bar"></div>
+          </div>
+          <span id="upload-pct" style="font-size:.7rem;color:var(--muted)">0%</span>
+        </div>
+      </div>
+
+      <!-- Loss chart -->
+      <div class="card chart-card" style="grid-area:loss">
+        <h3 class="card-title">📉 Loss</h3>
+        <canvas id="loss-chart"></canvas>
+      </div>
+
+      <!-- Accuracy chart -->
+      <div class="card chart-card" style="grid-area:acc">
+        <h3 class="card-title">🎯 Accuracy (%)</h3>
+        <canvas id="acc-chart"></canvas>
+      </div>
+
+      <!-- Network diagram (node-based replay) -->
+      <div class="card net-card" style="grid-area:net;overflow:auto">
+        <h3 class="card-title">🧠 Network — Active Layer</h3>
+        <div style="overflow:auto;height:calc(100% - 2rem)">
+          <svg id="net-svg-train" height="280" width="100"></svg>
+        </div>
+      </div>
+
+      <!-- Log -->
+      <div class="card log-card" style="grid-area:log">
+        <h3 class="card-title">🖥 Log</h3>
+        <div id="log" class="log"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="{% static 'js/builder.js' %}"></script>
+  <script src="{% static 'js/train.js' %}"></script>
+</body>
+
+</html>
