@@ -1,2 +1,1 @@
-# Railway / Render / Fly.io
-web: uv run gunicorn trainer.wsgi:application --bind 0.0.0.0:$PORT --workers 1 --worker-class gthread --threads 4 --timeout 300
+web: uv run waitress-serve --host=0.0.0.0 --port=$PORT --threads=4 trainer.wsgi:application

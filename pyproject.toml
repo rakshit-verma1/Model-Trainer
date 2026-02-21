@@ -9,6 +9,7 @@ dependencies = [
     "gunicorn>=25.1.0",
     "torch>=2.2",
     "torchvision>=0.17",
+    "waitress>=3.0.2",
     "whitenoise>=6.11.0",
 ]
 
