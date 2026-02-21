@@ -23,7 +23,10 @@ const chartBase = (label, color) => ({
         ]
     },
     options: {
-        animation: { duration: 350 },
+        // No global animation — we control it per-update.
+        // Animating on live SSE events causes the two charts to render
+        // at different times and appear out of sync.
+        animation: false,
         responsive: true,
         maintainAspectRatio: false,
         plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } },
@@ -38,21 +41,31 @@ const lossChart = new Chart(document.getElementById('loss-chart'), chartBase('Lo
 const accChart = new Chart(document.getElementById('acc-chart'), chartBase('Acc', '#22d3a0'));
 
 function pushChartPoint(epoch, trainLoss, valLoss, trainAcc, valAcc) {
-    lossChart.data.labels.push(`E${epoch}`);
+    const label = `E${epoch}`;
+
+    // Push ALL data to BOTH charts before calling any update().
+    // This ensures they share the same label and data state.
+    lossChart.data.labels.push(label);
     lossChart.data.datasets[0].data.push(trainLoss);
     lossChart.data.datasets[1].data.push(valLoss);
-    lossChart.update();
-    accChart.data.labels.push(`E${epoch}`);
+
+    accChart.data.labels.push(label);
     accChart.data.datasets[0].data.push(trainAcc);
     accChart.data.datasets[1].data.push(valAcc);
-    accChart.update();
+
+    // Update both in the same animation frame so the browser
+    // paints them together — no visual lag between the two charts.
+    requestAnimationFrame(() => {
+        lossChart.update('none');  // 'none' = skip animation, render instantly
+        accChart.update('none');
+    });
 }
 
 function resetCharts() {
     [lossChart, accChart].forEach(c => {
         c.data.labels = [];
         c.data.datasets.forEach(d => d.data = []);
-        c.update();
+        c.update('none');
     });
 }
 
