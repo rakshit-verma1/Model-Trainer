@@ -1,9 +1,10 @@
 /**
  * train.js
  *
- * Two responsibilities:
- * 1. uploadDataset() — XHR upload with progress events (streaming to server)
+ * Responsibilities:
+ * 1. uploadDataset() — XHR upload with progress events
  * 2. startTraining() — POST config, open SSE, drive charts + layer highlight
+ * 3. Dynamic metric display (accuracy for classification, MAE for regression)
  */
 
 // ── Chart setup ───────────────────────────────────────────────────────
@@ -23,9 +24,6 @@ const chartBase = (label, color) => ({
         ]
     },
     options: {
-        // No global animation — we control it per-update.
-        // Animating on live SSE events causes the two charts to render
-        // at different times and appear out of sync.
         animation: false,
         responsive: true,
         maintainAspectRatio: false,
@@ -40,23 +38,21 @@ const chartBase = (label, color) => ({
 const lossChart = new Chart(document.getElementById('loss-chart'), chartBase('Loss', '#6366f1'));
 const accChart = new Chart(document.getElementById('acc-chart'), chartBase('Acc', '#22d3a0'));
 
-function pushChartPoint(epoch, trainLoss, valLoss, trainAcc, valAcc) {
+let _currentTaskType = 'classification';
+
+function pushChartPoint(epoch, trainLoss, valLoss, metric1, metric2) {
     const label = `E${epoch}`;
 
-    // Push ALL data to BOTH charts before calling any update().
-    // This ensures they share the same label and data state.
     lossChart.data.labels.push(label);
     lossChart.data.datasets[0].data.push(trainLoss);
     lossChart.data.datasets[1].data.push(valLoss);
 
     accChart.data.labels.push(label);
-    accChart.data.datasets[0].data.push(trainAcc);
-    accChart.data.datasets[1].data.push(valAcc);
+    accChart.data.datasets[0].data.push(metric1);
+    accChart.data.datasets[1].data.push(metric2);
 
-    // Update both in the same animation frame so the browser
-    // paints them together — no visual lag between the two charts.
     requestAnimationFrame(() => {
-        lossChart.update('none');  // 'none' = skip animation, render instantly
+        lossChart.update('none');
         accChart.update('none');
     });
 }
@@ -67,6 +63,24 @@ function resetCharts() {
         c.data.datasets.forEach(d => d.data = []);
         c.update('none');
     });
+}
+
+function updateMetricLabels(taskType) {
+    _currentTaskType = taskType;
+    if (taskType === 'regression') {
+        document.getElementById('stat-metric1-label').textContent = 'Train MAE';
+        document.getElementById('stat-metric2-label').textContent = 'Val MAE';
+        document.getElementById('metric-chart-title').textContent = '📏 MAE';
+        accChart.data.datasets[0].label = 'Train MAE';
+        accChart.data.datasets[1].label = 'Val MAE';
+    } else {
+        document.getElementById('stat-metric1-label').textContent = 'Train Acc';
+        document.getElementById('stat-metric2-label').textContent = 'Val Acc';
+        document.getElementById('metric-chart-title').textContent = '🎯 Accuracy (%)';
+        accChart.data.datasets[0].label = 'Train Acc';
+        accChart.data.datasets[1].label = 'Val Acc';
+    }
+    accChart.update('none');
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -89,32 +103,55 @@ function onInfo(data) {
         badge.textContent = data.device.startsWith('cuda') ? '⚡ GPU' : '🖥 CPU';
         badge.style.color = data.device.startsWith('cuda') ? 'var(--green)' : '';
     }
+    if (data.task_type) {
+        updateMetricLabels(data.task_type);
+    }
 }
 
 function onModelReady(data) {
     log(`Model ready — ${data.total_params.toLocaleString()} trainable params`, 'success');
     setStat('stat-status', 'Training…');
+    if (data.task_type) {
+        updateMetricLabels(data.task_type);
+    }
 }
 
 function onEpochStart(data) {
     log(`── Epoch ${data.epoch} / ${data.total_epochs} ──`, 'warn');
     setStat('stat-epoch', `${data.epoch} / ${data.total_epochs}`);
     setStat('stat-status', `Epoch ${data.epoch}`);
-    highlightLayer(data.epoch - 1);
+    startForwardPassAnimation();
 }
 
 function onBatch(data) {
     setStat('stat-loss', data.loss);
-    setStat('stat-acc', data.acc + '%');
+    if (_currentTaskType === 'regression') {
+        setStat('stat-acc', data.mae !== undefined ? data.mae : '—');
+    } else {
+        setStat('stat-acc', data.acc !== undefined ? data.acc + '%' : '—');
+    }
 }
 
 function onEpochEnd(data) {
-    pushChartPoint(data.epoch, data.train_loss, data.val_loss, data.train_acc, data.val_acc);
+    stopForwardPassAnimation();
+
+    if (data.task_type) _currentTaskType = data.task_type;
+
+    const isRegression = _currentTaskType === 'regression';
+    const m1 = isRegression ? data.train_mae : data.train_acc;
+    const m2 = isRegression ? data.val_mae : data.val_acc;
+
+    pushChartPoint(data.epoch, data.train_loss, data.val_loss, m1, m2);
     setStat('stat-loss', data.train_loss);
     setStat('stat-val-loss', data.val_loss);
-    setStat('stat-acc', data.train_acc + '%');
-    setStat('stat-val-acc', data.val_acc + '%');
-    log(`Epoch ${data.epoch}: loss=${data.train_loss}  val=${data.val_loss}  acc=${data.train_acc}%  val_acc=${data.val_acc}%`, 'success');
+    setStat('stat-acc', isRegression ? m1 : m1 + '%');
+    setStat('stat-val-acc', isRegression ? m2 : m2 + '%');
+
+    if (isRegression) {
+        log(`Epoch ${data.epoch}: loss=${data.train_loss}  val=${data.val_loss}  mae=${m1}  val_mae=${m2}`, 'success');
+    } else {
+        log(`Epoch ${data.epoch}: loss=${data.train_loss}  val=${data.val_loss}  acc=${m1}%  val_acc=${m2}%`, 'success');
+    }
 }
 
 function onDone(data) {
@@ -122,7 +159,9 @@ function onDone(data) {
     setStat('stat-status', '✅ Done');
     document.getElementById('btn-train').disabled = false;
     document.getElementById('btn-train').textContent = '▶ Start Training';
-    highlightLayer(-1);
+    stopForwardPassAnimation();
+    window.setActiveLayerInList?.(-1);
+    renderDiagram('net-svg-train', -1);
     if (data.session_id) showDownloadBtn(data.session_id);
 }
 
@@ -167,20 +206,33 @@ function onError(data) {
     setStat('stat-status', '❌ Error');
     document.getElementById('btn-train').disabled = false;
     document.getElementById('btn-train').textContent = '▶ Start Training';
+    stopForwardPassAnimation();
+    window.setActiveLayerInList?.(-1);
 }
 
-function highlightLayer(idx) {
+// ── Forward-pass layer animation ──────────────────────────────────────
+let _fwdTimer = null;
+let _fwdIdx = 0;
+
+function startForwardPassAnimation() {
+    stopForwardPassAnimation();
     const layers = window.getLayers();
-    const active = layers.length ? idx % layers.length : -1;
-    renderDiagram('net-svg-train', active);
+    if (!layers.length) return;
+    _fwdIdx = 0;
+    _fwdTimer = setInterval(() => {
+        window.setActiveLayerInList?.(_fwdIdx);
+        _fwdIdx = (_fwdIdx + 1) % layers.length;
+    }, 300);
+}
+
+function stopForwardPassAnimation() {
+    if (_fwdTimer !== null) {
+        clearInterval(_fwdTimer);
+        _fwdTimer = null;
+    }
 }
 
 // ── Streaming upload via XHR ──────────────────────────────────────────
-/**
- * Uses XMLHttpRequest (not fetch) because XHR exposes upload.onprogress,
- * giving us byte-level progress while the file streams to the server.
- * fetch() supports progress only via ReadableStream which is more complex.
- */
 function uploadDataset(file, onProgress) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
@@ -219,8 +271,12 @@ window.startTraining = async function () {
     const layers = window.getLayers();
     if (layers.length === 0) { alert('Add at least one layer first!'); return; }
 
+    const taskType = document.getElementById('task-type').value;
+    const datasetVal = document.getElementById('dataset').value;
+
     const config = {
-        dataset: document.getElementById('dataset').value,
+        dataset: datasetVal,
+        task_type: taskType,
         optimizer: document.getElementById('optimizer').value,
         loss: document.getElementById('loss').value,
         lr: parseFloat(document.getElementById('lr').value),
@@ -230,6 +286,7 @@ window.startTraining = async function () {
 
     // Reset UI
     resetCharts();
+    updateMetricLabels(taskType);
     document.getElementById('log').innerHTML = '';
     ['stat-epoch', 'stat-loss', 'stat-val-loss', 'stat-acc', 'stat-val-acc'].forEach(id => setStat(id, '—'));
     setStat('stat-status', 'Starting…');
@@ -239,11 +296,11 @@ window.startTraining = async function () {
     btn.disabled = true;
     btn.textContent = '⏳ Working…';
 
-    // ── Custom dataset: upload first ──────────────────────────────────
-    if (config.dataset === 'custom') {
+    // ── Custom/CSV dataset: upload first ──────────────────────────────
+    if (datasetVal === 'custom' || datasetVal === 'csv') {
         const file = window._droppedFile || document.getElementById('custom-file').files[0];
         if (!file) {
-            alert('Please select or drag-and-drop a dataset ZIP file first!');
+            alert('Please select or drag-and-drop a dataset file first!');
             btn.disabled = false;
             btn.textContent = '▶ Start Training';
             return;
@@ -253,7 +310,6 @@ window.startTraining = async function () {
         showUploadProgress(true);
         setUploadPct(0);
 
-        // Switch to training tab so user sees upload progress
         document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
         document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
         document.getElementById('panel-train').classList.add('active');
@@ -280,7 +336,6 @@ window.startTraining = async function () {
 
         showUploadProgress(false);
     } else {
-        // For built-in datasets, switch panel immediately
         document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
         document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
         document.getElementById('panel-train').classList.add('active');
@@ -290,7 +345,7 @@ window.startTraining = async function () {
     btn.textContent = '⏳ Training…';
     renderDiagram('net-svg-train', -1);
 
-    log(`Config: dataset=${config.dataset}, opt=${config.optimizer}, loss=${config.loss}, lr=${config.lr}, epochs=${config.epochs}`, 'info');
+    log(`Config: task=${config.task_type}, dataset=${config.dataset}, opt=${config.optimizer}, loss=${config.loss}, lr=${config.lr}, epochs=${config.epochs}`, 'info');
 
     // POST config → session_id
     let sessionId;
